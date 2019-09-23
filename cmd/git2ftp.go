@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/otiai10/copy"
 	"github.com/secsy/goftp"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -53,43 +53,33 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		_, err = client.Stat(item.Path + "/git2ftp.hash")
-		if err != nil {
-			log.Println(item.Host, ":", "hash文件不存在")
-
-			logs, _ := git2ftp.Cmd("git", "--no-pager", `--git-dir=`+currentTempGitDirConf, `--work-tree=`+currentTempGitDir, "log", `--pretty=format:%H|%s`, "-30")
-			logsList := strings.Split(logs, "\n")
-			for i := range logsList {
-				fmt.Println(fmt.Sprintf("[%d]:%s", i, logsList[i]))
-			}
-			i := -1
-			fmt.Println(item.Host, ":", "选择当前FTP所存在的对应版本[输入编号]:")
-
-			fmt.Scanln(&i)
-			if i >= 0 {
-				if len(strings.Split(logsList[i], "|")) > 0 {
-					hashs := strings.Split(logsList[i], "|")[0]
-
-					var hash bytes.Buffer
-					hash.WriteString(hashs)
-					client.Store(item.Path+"/git2ftp.hash", &hash)
-				}
-			}
-		}
 
 		//获取线上版本号
-		onlineHash, err := git2ftp.FtpRead(client, item.Path+"/git2ftp.hash")
-		if err != nil {
-			log.Println(err.Error())
-		}
+		onlineHash := git2ftp.GetHashByFtp(client, item, currentTempGitDir)
+
 		log.Println("线上版本号:", onlineHash)
 
-		//查看差异文件
-		diffFile, err := git2ftp.Cmd("git", "--no-pager", `--git-dir=`+currentTempGitDirConf, `--work-tree=`+currentTempGitDir, "diff", "--name-only", onlineHash)
-		if err != nil {
-			log.Println(err.Error())
+		diffFiles := git2ftp.GetDiffFiles(currentTempGitDir, onlineHash)
+
+		for k := range diffFiles {
+			localPath, _ := filepath.Abs(currentTempGitDir + "/" + diffFiles[k])
+
+			isEnd := false
+			fmt.Print(item.Host, "[", diffFiles[k], "]开始上传")
+			go func() {
+				for !isEnd {
+					fmt.Print(".")
+					time.Sleep(time.Second)
+				}
+			}()
+			err := git2ftp.FtpWriteByFile(client, localPath, git2ftp.FtpAbs(item.Path+"/"+diffFiles[k]))
+			isEnd = true
+			if err != nil {
+				fmt.Println("上传失败:", err.Error())
+			} else {
+				fmt.Println("上传完成")
+			}
 		}
-		log.Println("差异文件:", diffFile)
 
 		client.Close()
 	}

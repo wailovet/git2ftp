@@ -2,6 +2,7 @@ package git2ftp
 
 import (
 	"errors"
+	"log"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -36,4 +37,29 @@ func SyncGit(currentTempGitDir string) error {
 	}
 
 	return nil
+}
+
+func GetDiffFiles(currentTempGitDir string, onlineHash string) []string {
+	var result []string
+
+	currentTempGitDirConf, _ := filepath.Abs(currentTempGitDir + "/.git")
+	//查看差异文件
+	diffFile, err := Cmd("git", "--no-pager", `--git-dir=`+currentTempGitDirConf, `--work-tree=`+currentTempGitDir, "diff", "--name-only", onlineHash)
+	if err != nil {
+		log.Println(err.Error())
+	}
+
+	diffFileList := strings.Split(diffFile, "\n")
+	for k := range diffFileList {
+		diffFileList[k] = strings.TrimSpace(diffFileList[k])
+
+		if diffFileList[k] != "" {
+			absPath, _ := filepath.Abs(currentTempGitDir + "/" + diffFileList[k])
+			if IsExist(absPath) {
+				result = append(result, diffFileList[k])
+				//log.Println("差异文件:", absPath, "-->", diffFileList[k])
+			}
+		}
+	}
+	return result
 }
