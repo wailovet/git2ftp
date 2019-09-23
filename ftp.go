@@ -3,6 +3,7 @@ package git2ftp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/secsy/goftp"
 	"io/ioutil"
@@ -32,16 +33,34 @@ func InitGit2ftpConfig() git2ftpConfig {
 	git2ftpc := git2ftpConfig{}
 	if !IsExist(confPath) {
 		fmt.Println("git2ftp未被初始化!")
-		fmt.Println("输入要上传的ftp主机:")
-		fmt.Scanln(&ftpc.Host)
-		fmt.Println("输入ftp账号:")
+		for strings.TrimSpace(ftpc.Host) == "" {
+			fmt.Println("ftp域名或IP:")
+			fmt.Scanln(&ftpc.Host)
+		}
+		fmt.Println("端口号[默认21]:")
+		fmt.Scanln(&ftpc.Port)
+		if strings.TrimSpace(ftpc.Port) == "" {
+			ftpc.Port = "21"
+		}
+
+		fmt.Println("ftp账号:")
 		fmt.Scanln(&ftpc.User)
-		fmt.Println("输入ftp密码:")
+
+		fmt.Println("ftp密码:")
 		fmt.Scanln(&ftpc.Password)
-		ftpc.Port = "21"
+
+		fmt.Println("ftp部署路径[默认为'/']:")
+		fmt.Scanln(&ftpc.Path)
+		if strings.TrimSpace(ftpc.Path) == "" {
+			ftpc.Path = "/"
+		}
+
 		git2ftpc.Ftp = append(git2ftpc.Ftp, ftpc)
 		result, _ := json.Marshal(git2ftpc)
 		ioutil.WriteFile(confPath, result, 644)
+
+		log.Println("ftp初始化完成,请重新执行命令.")
+		os.Exit(0)
 	}
 
 	jsonText, _ := ioutil.ReadFile(confPath)
@@ -68,17 +87,49 @@ func FtpIsExist(client *goftp.Client, path string) bool {
 	return true
 }
 func FtpAutoMkdir(client *goftp.Client, remotePath string) error {
-	remoteDir := path.Dir(remotePath)
-	if !FtpIsExist(client, remoteDir) {
-		_, err := client.Mkdir(remoteDir)
+	dir, err := client.Stat(remotePath)
+	if err == nil {
+		if dir.IsDir() {
+			return nil
+		}
+		return errors.New("该路径存在非文件夹节点")
+	}
+
+	// Slow path: make sure parent exists and then call Mkdir for path.
+	i := len(remotePath)
+	for i > 0 && remotePath[i-1] == '/' { // Skip trailing path separator.
+		i--
+	}
+
+	j := i
+	for j > 0 && remotePath[j-1] != '/' { // Scan backward over element.
+		j--
+	}
+
+	if j > 1 {
+		// Create parent.
+		err = FtpAutoMkdir(client, FtpAbs(remotePath[:j-1]))
 		if err != nil {
 			return err
 		}
 	}
+
+	_, err = client.Mkdir(remotePath)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 func FtpWriteByFile(client *goftp.Client, localPath string, remotePath string) error {
-	err := FtpAutoMkdir(client, remotePath)
+
+	remoteDir := path.Dir(remotePath)
+	if !FtpIsExist(client, remoteDir) {
+		err := FtpAutoMkdir(client, remoteDir)
+		if err != nil {
+			return err
+		}
+	}
 
 	f, err := os.Open(localPath)
 	if err != nil {
@@ -93,9 +144,13 @@ func FtpWriteByFile(client *goftp.Client, localPath string, remotePath string) e
 }
 
 func FtpWrite(client *goftp.Client, remotePath string, data []byte) error {
-	err := FtpAutoMkdir(client, remotePath)
-	if err != nil {
-		return err
+
+	remoteDir := path.Dir(remotePath)
+	if !FtpIsExist(client, remoteDir) {
+		err := FtpAutoMkdir(client, remoteDir)
+		if err != nil {
+			return err
+		}
 	}
 
 	var buf bytes.Buffer
